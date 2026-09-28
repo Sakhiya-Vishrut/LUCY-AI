@@ -1,0 +1,24 @@
+<UserControl x:Class="LucyAI.UI.Controls.LucyParticleHologramControl"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" 
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008" 
+             mc:Ignorable="d" 
+             d:DesignHeight="360" d:DesignWidth="360">
+
+    <Grid Background="Transparent">
+        <!-- Render Canvas for 3D Particles, Tech Rings, and Radial Audio Spectrum -->
+        <Canvas x:Name="HologramCanvas" ClipToBounds="False" HorizontalAlignment="Stretch" VerticalAlignment="Stretch"/>
+
+        <!-- Center Glowing Core Aura -->
+        <Ellipse x:Name="CoreGlow" Width="140" Height="140" HorizontalAlignment="Center" VerticalAlignment="Center" IsHitTestVisible="False">
+            <Ellipse.Fill>
+                <RadialGradientBrush>
+                    <GradientStop Color="#90FFB300" Offset="0.0"/>
+                    <GradientStop Color="#4000E5FF" Offset="0.5"/>
+                    <GradientStop Color="#00040711" Offset="1.0"/>
+                </RadialGradientBrush>
+            </Ellipse.Fill>
+        </Ellipse>
+    </Grid>
+</UserControl>
