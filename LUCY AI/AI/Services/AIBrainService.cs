@@ -39,7 +39,7 @@ namespace LucyAI.AI.Services
             "running on Windows .NET 10. Respond concisely in 1–2 sentences. " +
             "Be smart, clear, witty, and natural for speech synthesis. " +
             "Do NOT use markdown, bullet points, or special symbols. " +
-            "Address the user as 'Vishrut'.";
+            "Address the user as 'Boss'.";
 
         // ── State ─────────────────────────────────────────────────────────────
         public string ActiveModel { get; set; }
@@ -56,22 +56,14 @@ namespace LucyAI.AI.Services
         };
 
         // ── Constructor ───────────────────────────────────────────────────────
-        /// <param name="options">
-        ///   Injected by DI from the "Ollama" section of appsettings.json.
-        ///   IOptions&lt;T&gt; is the standard .NET pattern for typed config.
-        ///   .Value gives you the concrete OllamaSettings object.
-        /// </param>
         public AIBrainService(IOptions<OllamaSettings> options)
         {
             _settings = options.Value;
-
-            // Start with the model defined in appsettings.json (no hardcoding)
             ActiveModel = _settings.DefaultModel;
 
-            // HttpClient with configurable timeout from settings
             _httpClient = new HttpClient
             {
-                Timeout = TimeSpan.FromSeconds(_settings.TimeoutSeconds)
+                Timeout = TimeSpan.FromSeconds(Math.Min(_settings.TimeoutSeconds, 4))
             };
 
             Log.Information("AIBrainService initialised — model: {Model}, endpoint: {Url}",
@@ -80,11 +72,6 @@ namespace LucyAI.AI.Services
 
         // ── Public API ────────────────────────────────────────────────────────
 
-        /// <summary>
-        /// Switch to a different Ollama model at runtime without restarting.
-        /// Validates that the name is non-empty; actual model availability is
-        /// checked when the next request is made to Ollama.
-        /// </summary>
         public Task<bool> SwitchModelAsync(string modelName)
         {
             if (string.IsNullOrWhiteSpace(modelName))
@@ -99,19 +86,13 @@ namespace LucyAI.AI.Services
             return Task.FromResult(true);
         }
 
-        /// <summary>
-        /// Send a user prompt to Ollama and return a clean, speech-ready string.
-        /// Falls back to built-in keyword responses if Ollama is offline or slow.
-        /// </summary>
         public async Task<string> GenerateResponseAsync(string userPrompt)
         {
             if (string.IsNullOrWhiteSpace(userPrompt))
-                return "I am listening, Vishrut.";
+                return "I am listening, Boss.";
 
             try
             {
-                // Build the request payload Ollama expects
-                // stream: false  → wait for the full response, not a streaming stream
                 var payload = new
                 {
                     model   = ActiveModel,
@@ -120,21 +101,19 @@ namespace LucyAI.AI.Services
                     options = new
                     {
                         temperature = _settings.Temperature,
-                        num_predict = _settings.MaxTokens   // Ollama's name for max tokens
+                        num_predict = _settings.MaxTokens
                     }
                 };
 
                 string json    = JsonSerializer.Serialize(payload);
                 var    content = new StringContent(json, Encoding.UTF8, "application/json");
 
-                // POST to http://localhost:11434/api/generate
                 var response = await _httpClient.PostAsync(_settings.GenerateUrl, content);
 
                 if (response.IsSuccessStatusCode)
                 {
                     string responseBody = await response.Content.ReadAsStringAsync();
 
-                    // Ollama returns: { "model": "phi4", "response": "...", "done": true, ... }
                     using var doc = JsonDocument.Parse(responseBody);
                     if (doc.RootElement.TryGetProperty("response", out var respElement))
                     {
@@ -155,13 +134,10 @@ namespace LucyAI.AI.Services
             }
             catch (TaskCanceledException)
             {
-                // Timeout — Ollama is taking too long (model may be loading)
-                Log.Warning("Ollama request timed out after {Seconds}s — using fallback.",
-                    _settings.TimeoutSeconds);
+                Log.Warning("Ollama request timed out — using fallback.");
             }
             catch (HttpRequestException ex)
             {
-                // Ollama not running at all
                 Log.Warning("Ollama unreachable: {Message} — using fallback.", ex.Message);
             }
             catch (Exception ex)
@@ -169,18 +145,11 @@ namespace LucyAI.AI.Services
                 Log.Error(ex, "Unexpected error in GenerateResponseAsync");
             }
 
-            // ── Fallback ──────────────────────────────────────────────────────
-            // Ollama is offline or too slow — answer locally from keyword rules.
-            // This keeps LUCY functional even without the AI model loaded.
             return GenerateSmartFallbackResponse(userPrompt);
         }
 
         // ── Private Helpers ───────────────────────────────────────────────────
 
-        /// <summary>
-        /// Strip markdown symbols that sound wrong when spoken aloud.
-        /// e.g. "**important**" → "important"
-        /// </summary>
         private static string CleanResponseForSpeech(string rawText)
         {
             return rawText
@@ -193,66 +162,96 @@ namespace LucyAI.AI.Services
                 .Trim();
         }
 
-        /// <summary>
-        /// Built-in keyword-based responses for when Ollama is unavailable.
-        /// Covers the most common conversational patterns so LUCY is never silent.
-        /// </summary>
         private static string GenerateSmartFallbackResponse(string prompt)
         {
             string p = prompt.ToLowerInvariant().Trim().TrimEnd('.', '!', '?');
 
             // ── Greetings ──────────────────────────────────────────────────
             if (p is "hello" or "hi" or "hey" || p.Contains("hello") || p.Contains("greetings"))
-                return "Hello Vishrut! I am Lucy, your JARVIS Voice AI Assistant. How can I help you today?";
+                return "Hello Boss. How can I help you?";
 
             // ── Time & Date ────────────────────────────────────────────────
             if (p.Contains("time") || p.Contains("what time"))
-                return $"The current local time is {DateTime.Now:hh:mm tt}, Vishrut.";
+                return $"The current local time is {DateTime.Now:hh:mm tt}, Boss.";
 
             if (p.Contains("date") || p.Contains("what day") || p.Contains("today"))
-                return $"Today is {DateTime.Now:dddd, MMMM d, yyyy}, Vishrut.";
+                return $"Today is {DateTime.Now:dddd, MMMM d, yyyy}, Boss.";
 
-            // ── Weather ────────────────────────────────────────────────────
-            if (p.Contains("weather") || p.Contains("temperature"))
-                return "Atmospheric sensors report optimal local conditions with clear skies, Vishrut.";
-
-            // ── Identity ───────────────────────────────────────────────────
+            // ── Identity & Capabilities ───────────────────────────────────
             if (p.Contains("who are you") || p.Contains("what is your name") || p.Contains("your name"))
                 return "I am LUCY, your futuristic voice-first AI Operating System running locally on Windows .NET 10.";
 
             if (p.Contains("what can you do") || p.Contains("help") || p.Contains("capabilities"))
-                return "I can control your PC, open apps, search the web, manage files, answer questions, and much more. Just ask, Vishrut.";
+                return "I can control your PC, open apps, search the web, manage files, answer software and tech questions, and much more. Just ask, Boss.";
 
             // ── Wellbeing ──────────────────────────────────────────────────
             if (p.Contains("how are you") || p.Contains("kaise ho") || p.Contains("kem cho"))
-                return "All neural networks are operating at peak performance, Vishrut. How can I assist you?";
+                return "All neural networks are operating at peak performance, Boss. How can I assist you?";
 
-            // ── Humour ─────────────────────────────────────────────────────
+            // ── Humour & Trivia ────────────────────────────────────────────
             if (p.Contains("joke") || p.Contains("funny"))
-                return "Why do software engineers prefer dark mode? Because light attracts real bugs, Vishrut!";
+                return "Why do software engineers prefer dark mode? Because light attracts real bugs, Boss!";
 
-            // ── Gujarati / Hindi ────────────────────────────────────────────
-            if (p.Contains("kem cho") || p.Contains("majama"))
-                return "Hu maja ma chu, Vishrut! All systems operating at peak efficiency.";
+            // ── Offline Software & Technical Knowledge Base ──────────────────
+            if (p.Contains("dependency injection") || p.Contains("di"))
+                return "Dependency Injection is a design pattern where an object receives its dependencies from an external source rather than creating them internally, Boss.";
 
-            if (p.Contains("shu karo cho") || p.Contains("kya kar rahe ho"))
-                return "Main aapki help kar raha hu, Vishrut. Batao kya karna hai.";
+            if (p.Contains("angular"))
+                return "Angular is a TypeScript-based open-source web application framework developed by Google for building single-page web apps, Boss.";
 
-            // ── System status ──────────────────────────────────────────────
-            if (p.Contains("status") || p.Contains("system"))
-                return "All LUCY subsystems are online and running at optimal performance, Vishrut.";
+            if (p.Contains(".net") || p.Contains("dotnet") || p.Contains("c#") || p.Contains("c sharp"))
+                return ".NET is Microsoft's cross-platform developer platform, and C sharp is its modern object-oriented programming language, Boss.";
 
-            // ── Thank you ──────────────────────────────────────────────────
-            if (p.Contains("thank") || p.Contains("thanks") || p.Contains("shukriya") || p.Contains("dhanyavad"))
-                return "Always at your service, Vishrut. That is what I am here for.";
+            if (p.Contains("object oriented") || p.Contains("oop"))
+                return "Object-Oriented Programming is a paradigm based on objects containing data and methods, built on encapsulation, inheritance, polymorphism, and abstraction, Boss.";
 
-            // ── Goodbye ────────────────────────────────────────────────────
-            if (p.Contains("bye") || p.Contains("goodbye") || p.Contains("see you") || p.Contains("alvida"))
-                return "Goodbye Vishrut. LUCY remains on standby whenever you need me.";
+            if (p.Contains("microservice") || p.Contains("microservices"))
+                return "Microservices is an architectural style where an application is built as independent services communicating over APIs, Boss.";
 
-            // ── Default ────────────────────────────────────────────────────
-            return $"I have processed your query regarding '{prompt}', Vishrut. " +
-                   "Connect me to Ollama for a smarter response.";
+            if (p.Contains("rest api") || p.Contains("restful") || p.Contains("rest"))
+                return "REST is an architectural style for web services using standard HTTP methods like GET, POST, PUT, and DELETE, Boss.";
+
+            if (p.Contains("docker") || p.Contains("container"))
+                return "Docker is a platform for packaging applications into isolated containers that run consistently across any environment, Boss.";
+
+            if (p.Contains("git") || p.Contains("github"))
+                return "Git is a distributed version control system used to track changes in source code during software development, Boss.";
+
+            if (p.Contains("sql") || p.Contains("database"))
+                return "SQL is the standard language for querying, updating, and managing relational database systems, Boss.";
+
+            if (p.Contains("async") || p.Contains("asynchronous") || p.Contains("await"))
+                return "Async and await allow asynchronous code to execute without blocking the main thread, keeping user interfaces responsive, Boss.";
+
+            if (p.Contains("python"))
+                return "Python is a high-level interpreted programming language widely used for web development, automation, and AI, Boss.";
+
+            if (p.Contains("artificial intelligence") || p.Contains("machine learning") || p.Contains(" ai "))
+                return "Artificial Intelligence empowers systems to learn from data and perform cognitive tasks like speech recognition and decision making, Boss.";
+
+            if (p.Contains("solid principle") || p.Contains("solid"))
+                return "SOLID represents five object-oriented design principles that foster maintainable, scalable, and testable software, Boss.";
+
+            if (p.Contains("react"))
+                return "React is a popular JavaScript library developed by Meta for building dynamic user interfaces with component-based architecture, Boss.";
+
+            if (p.Contains("typescript"))
+                return "TypeScript is a strongly typed superset of JavaScript that compiles to plain JavaScript, adding static type safety, Boss.";
+
+            // ── Thank you & Goodbye ─────────────────────────────────────────
+            if (p.Contains("thank") || p.Contains("thanks") || p.Contains("shukriya"))
+                return "Always at your service, Boss.";
+
+            if (p.Contains("bye") || p.Contains("goodbye") || p.Contains("see you"))
+                return "Goodbye Boss. LUCY remains on standby whenever you need me.";
+
+            // ── Smart Search Fallback for Questions ────────────────────────
+            if (p.StartsWith("what") || p.StartsWith("how") || p.StartsWith("why") || p.StartsWith("who") || p.StartsWith("explain") || p.StartsWith("tell me") || p.StartsWith("search"))
+            {
+                return $"[WEB_SEARCH:{prompt}]";
+            }
+
+            return $"I have processed your request regarding '{prompt}', Boss. System standing by.";
         }
     }
 }

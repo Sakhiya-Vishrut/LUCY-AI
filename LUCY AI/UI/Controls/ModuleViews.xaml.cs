@@ -61,7 +61,7 @@ namespace LucyAI.UI.Controls
             string desc = pageName switch
             {
                 "Voice" => "Voice Assistant Mode: Continuous offline wake-word listener ('Lucy') active. Speak commands naturally in English, Gujarati, Hindi, or mixed language.",
-                "Memory" => "Long-Term AI Memory: Storing user preferences, project paths, frequently opened applications, and custom workflow context for Vishrut.",
+                "Memory" => "Long-Term AI Memory: Storing user preferences, project paths, frequently opened applications, and custom workflow context for Boss.",
                 "Files" => "Files AI Indexer: Real-time search across Desktop, Documents, Downloads, and source code folders. Speak 'Lucy search invoice PDF' to locate files.",
                 "Vision" => "Vision & OCR Engine: Active desktop analyzer. Supports full-screen OCR, window detection, element highlighting, and mouse control.",
                 "Browser" => "Voice Browser AI: Web search automation, YouTube playback, page summaries, and form filling triggered entirely by natural speech.",

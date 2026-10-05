@@ -73,7 +73,16 @@ namespace LucyAI.Voice.Services
         {
             try
             {
+                Log.Information("Initializing TTS engine...");
                 _synthesizer = new SpeechSynthesizer();
+
+                if (_synthesizer == null)
+                {
+                    Log.Error("CRITICAL: SpeechSynthesizer constructor returned null!");
+                    return;
+                }
+
+                Log.Debug("SpeechSynthesizer created successfully");
 
                 // Prefer the voice gender specified in appsettings.json
                 try
@@ -82,9 +91,12 @@ namespace LucyAI.Voice.Services
                         _synthesizer.SelectVoice("Microsoft Zira Desktop");
                     else
                         _synthesizer.SelectVoice("Microsoft David Desktop");
+                    
+                    Log.Debug("Selected voice: {Voice}", _synthesizer.Voice.Name);
                 }
-                catch
+                catch (Exception voiceEx)
                 {
+                    Log.Warning(voiceEx, "Named voice selection failed, trying gender fallback");
                     // Named voice not installed — fall back to any voice with correct gender
                     try
                     {
@@ -92,8 +104,13 @@ namespace LucyAI.Voice.Services
                             ? VoiceGender.Female
                             : VoiceGender.Male;
                         _synthesizer.SelectVoiceByHints(gender, VoiceAge.Adult);
+                        Log.Debug("Selected voice by gender: {Voice}", _synthesizer.Voice.Name);
                     }
-                    catch { /* use whatever voice Windows has */ }
+                    catch (Exception genderEx)
+                    {
+                        Log.Warning(genderEx, "Gender voice selection failed, using system default");
+                        /* use whatever voice Windows has */
+                    }
                 }
 
                 // Apply rate and volume from config (-10..+10 and 0..100)
@@ -105,6 +122,7 @@ namespace LucyAI.Voice.Services
                 {
                     string state = e.State == SynthesizerState.Speaking ? "Speaking" : "Listening";
                     VoiceStateChanged?.Invoke(this, state);
+                    Log.Debug("TTS state changed: {State}", state);
                 };
 
                 Log.Information("TTS engine ready — voice: {Voice}, rate: {Rate}, vol: {Vol}",
@@ -114,7 +132,7 @@ namespace LucyAI.Voice.Services
             }
             catch (Exception ex)
             {
-                Log.Error(ex, "Failed to initialise SpeechSynthesizer — TTS will use Python fallback.");
+                Log.Error(ex, "CRITICAL: Failed to initialise SpeechSynthesizer — TTS will use Python fallback.");
                 _synthesizer = null;
             }
         }
@@ -126,7 +144,6 @@ namespace LucyAI.Voice.Services
             try
             {
                 // Always use en-US for the grammar engine
-                // (multi-language via Whisper is handled in a later phase)
                 var culture = new CultureInfo("en-US");
 
                 try   { _recognizer = new SpeechRecognitionEngine(culture); }
@@ -135,69 +152,114 @@ namespace LucyAI.Voice.Services
                 _recognizer.SetInputToDefaultAudioDevice();
 
                 // ═══════════════════════════════════════════════════════════════
-                //  FREE-FORM SPEECH RECOGNITION (DictationGrammar only)
+                //  HYBRID SPEECH RECOGNITION ENGINE (CommandChoices + Dictation)
                 // ═══════════════════════════════════════════════════════════════
-                //
-                //  WHY THIS FIX SOLVES YOUR PROBLEM:
-                //
-                //    You said: "Hello Lucy open Chrome"
-                //    Old grammar had: ["Hello Lucy", "Open Chrome"] as separate items
-                //    Result: REJECTED because "Hello Lucy open Chrome" didn't match
-                //
-                //    New approach: Load ONLY DictationGrammar (free-form speech).
-                //    Windows Speech recognises ANYTHING you say, then passes the
-                //    full text to MainViewModel which does flexible keyword matching.
-                //
-                //    Now these ALL work:
-                //      ✓ "open chrome"
-                //      ✓ "lucy open chrome"
-                //      ✓ "hello lucy open chrome"
-                //      ✓ "hey lucy can you please open chrome"
-                //
-                //    The ViewModel checks `if (lower.Contains("open chrome"))`, so
-                //    extra words don't break the command — just like Alexa/Siri.
-                //
-                //  TRADE-OFF:
-                //    DictationGrammar is slightly less accurate than a fixed phrase
-                //    list, but it never rejects valid commands due to extra words.
-                //    For a JARVIS assistant, flexibility > 100% perfect accuracy.
+                //  1. High-priority CommandChoices grammar matches key phrases
+                //     (Hello, Open Chrome, What time is it, etc.) with ~95% confidence.
+                //  2. Fallback DictationGrammar captures free-form custom sentences.
                 // ═══════════════════════════════════════════════════════════════
 
+                // 1. High-Priority Command Choices Grammar
                 try
                 {
-                    // Load free-form dictation grammar ONLY
-                    var dictationGrammar = new DictationGrammar();
-                    _recognizer.LoadGrammar(dictationGrammar);
-                    Log.Information("DictationGrammar loaded — free-form speech recognition active.");
+                    var choices = new Choices(new string[]
+                    {
+                        "Hello", "Hi", "Hey", "Hello Lucy", "Hi Lucy", "Hey Lucy", "Lucy hello", "Lucy hi", "Lucy hey",
+                        "Good morning", "Good afternoon", "Good evening", "How are you", "Lucy how are you",
+                        "Lucy kem cho", "Lucy kaise ho", "Who are you", "What is your name",
+                        "What can you do", "Help", "Lucy help", "Tell me a joke", "Joke",
+                        "Lucy", "Lucy wake up", "Lucy resume listening", "Lucy stop listening", "Lucy sleep",
+                        "Open Chrome", "Chrome kholo", "Browser kholo", "Launch Chrome", "Lucy open Chrome",
+                        "Open VS Code", "Open Visual Studio", "Code kholo", "Visual Studio kholo", "Lucy open Visual Studio",
+                        "Open Spotify", "Spotify kholo", "Play music", "Lucy open Spotify",
+                        "Open WhatsApp", "WhatsApp kholo", "Lucy open WhatsApp",
+                        "Open Calculator", "Calculator kholo", "Open Notepad", "Notepad kholo",
+                        "Open YouTube", "YouTube kholo", "Lucy open YouTube",
+                        "Play song on YouTube", "YouTube par song chalavo",
+                        "System Status", "Status shu che", "PC status kya hai", "Check status",
+                        "Take screenshot", "Screenshot lo", "Lucy take screenshot",
+                        "Lock screen", "PC lock karo", "Lock PC", "Lucy lock screen",
+                        "Shutdown computer", "Restart computer", "Delete downloads",
+                        "Volume up", "Volume down", "Mute audio", "Volume 50 percent", "Task manager", "Empty recycle bin",
+                        "Search Angular tutorial", "Lucy search Angular tutorial", "Search google", "What time is it", "Lucy what time is it",
+                        "What is the date", "What day is it",
+                        "Open home", "Open voice", "Open memory", "Open files", "Open browser", "Open vision", "Open automation", "Open apps", "Open settings", "Open developer", "Open control",
+                        "Yes confirm"
+                    });
+
+                    var gb = new GrammarBuilder(choices) { Culture = _recognizer.RecognizerInfo.Culture };
+                    var commandGrammar = new Grammar(gb) { Name = "CommandChoices", Weight = 1.0f };
+                    _recognizer.LoadGrammar(commandGrammar);
+                    Log.Information("CommandChoices grammar loaded successfully (Weight: 1.0).");
                 }
                 catch (Exception ex)
                 {
-                    // Rare: DictationGrammar unavailable on this Windows install
-                    Log.Warning(ex, "DictationGrammar unavailable — using minimal fallback grammar.");
-
-                    // Minimal fallback so LUCY isn't completely silent
-                    var choices = new Choices(new string[]
-                    {
-                        "Lucy", "Hello", "Hi", "Open", "Close", "Chrome",
-                        "What time", "Status", "Help", "Yes", "No"
-                    });
-                    var gb = new GrammarBuilder(choices) { Culture = _recognizer.RecognizerInfo.Culture };
-                    _recognizer.LoadGrammar(new Grammar(gb));
+                    Log.Warning(ex, "Failed to load CommandChoices grammar.");
                 }
 
-                // Audio level → drives the particle hologram animation
+                // 2. Free-form Dictation Grammar Fallback
+                try
+                {
+                    var dictationGrammar = new DictationGrammar { Name = "Dictation", Weight = 0.6f };
+                    _recognizer.LoadGrammar(dictationGrammar);
+                    Log.Information("DictationGrammar loaded successfully (Weight: 0.6).");
+                }
+                catch (Exception ex)
+                {
+                    Log.Warning(ex, "DictationGrammar unavailable on this system.");
+                }
+
+                // Live Audio level → drives particle hologram animation
                 _recognizer.AudioLevelUpdated += (_, e) =>
                     AudioLevelChanged?.Invoke(this, e.AudioLevel);
 
-                // Confidence threshold from appsettings.json (default 0.2)
+                // Diagnostic Audio Events
+                _recognizer.SpeechDetected += (_, e) =>
+                {
+                    Log.Debug("STT Audio detected from microphone (Position: {Position})", e.AudioPosition);
+                };
+
+                _recognizer.SpeechHypothesized += (_, e) =>
+                {
+                    if (e.Result != null && !string.IsNullOrWhiteSpace(e.Result.Text))
+                    {
+                        Log.Debug("STT Hypothesis: '{Text}'", e.Result.Text);
+                    }
+                };
+
+                // Speech Recognized with detailed diagnostic logging & adaptive threshold
                 _recognizer.SpeechRecognized += (_, e) =>
                 {
-                    if (e.Result != null
-                        && !string.IsNullOrWhiteSpace(e.Result.Text)
-                        && e.Result.Confidence >= _voiceSettings.SttConfidenceThreshold)
+                    if (e.Result == null || string.IsNullOrWhiteSpace(e.Result.Text)) return;
+
+                    float confidence = e.Result.Confidence;
+                    string text = e.Result.Text;
+                    float minThreshold = Math.Min(_voiceSettings.SttConfidenceThreshold, 0.15f);
+
+                    Log.Information("STT SpeechRecognized: '{Text}' (Confidence: {Confidence:F2}, Threshold: {Threshold:F2})",
+                        text, confidence, minThreshold);
+
+                    if (confidence >= minThreshold)
                     {
-                        OnRecognizedText(e.Result.Text);
+                        OnRecognizedText(text);
                     }
+                    else
+                    {
+                        Log.Warning("STT SpeechRecognized ignored due to low confidence: {Confidence:F2} < {Threshold:F2} (Text: '{Text}')",
+                            confidence, minThreshold, text);
+                    }
+                };
+
+                _recognizer.SpeechRecognitionRejected += (_, e) =>
+                {
+                    string text = e.Result != null ? e.Result.Text : "unrecognized audio";
+                    float confidence = e.Result != null ? e.Result.Confidence : 0.0f;
+                    Log.Warning("STT SpeechRejected by recognizer: '{Text}' (Confidence: {Confidence:F2})", text, confidence);
+                };
+
+                _recognizer.AudioSignalProblemOccurred += (_, e) =>
+                {
+                    Log.Warning("STT Audio Signal Problem: {Problem} (Position: {Position})", e.AudioSignalProblem, e.AudioPosition);
                 };
 
                 // Auto-restart after each completed recognition cycle
@@ -228,13 +290,20 @@ namespace LucyAI.Voice.Services
         /// </summary>
         private void OnRecognizedText(string text)
         {
-            if (string.IsNullOrWhiteSpace(text) || text.Length < 2) return;
+            if (string.IsNullOrWhiteSpace(text) || text.Trim().Length < 2) return;
 
-            // Debounce — ignore duplicates within the configured window
+            string cleaned = text.Trim().TrimEnd('.', '!', '?');
+
+            // Debounce — ignore duplicates within configured window
             if ((DateTime.Now - _lastSpeechTime).TotalMilliseconds < _voiceSettings.SttDebounceMs)
+            {
+                Log.Debug("STT OnRecognizedText debounced: '{Text}' (Window: {Ms}ms)", cleaned, _voiceSettings.SttDebounceMs);
                 return;
+            }
 
             _lastSpeechTime = DateTime.Now;
+
+            Log.Information("STT Command Accepted: '{Text}' — forwarding to MainViewModel", cleaned);
 
             // If LUCY is speaking, stop her so she doesn't talk over the user
             if (_synthesizer?.State == SynthesizerState.Speaking)
@@ -244,7 +313,7 @@ namespace LucyAI.Voice.Services
             }
 
             VoiceStateChanged?.Invoke(this, "Thinking");
-            VoiceCommandRecognized?.Invoke(this, text.Trim().TrimEnd('.', '!', '?'));
+            VoiceCommandRecognized?.Invoke(this, cleaned);
         }
 
         // ── Public Methods ────────────────────────────────────────────────────
@@ -289,24 +358,44 @@ namespace LucyAI.Voice.Services
         /// </summary>
         public async Task SpeakAsync(string text)
         {
-            if (string.IsNullOrWhiteSpace(text)) return;
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                Log.Warning("SpeakAsync called with empty text!");
+                return;
+            }
+
+            Log.Information("TTS speaking: '{Text}' (length: {Length} chars)", text.Substring(0, Math.Min(text.Length, 50)), text.Length);
 
             if (_synthesizer != null)
             {
-                await Task.Run(() =>
+                try
                 {
-                    try   { _synthesizer.Speak(text); }
-                    catch (Exception ex) { Log.Error(ex, "SpeechSynthesizer error during Speak."); }
-                });
+                    await Task.Run(() =>
+                    {
+                        try
+                        {
+                            _synthesizer.Speak(text);
+                            Log.Debug("TTS completed successfully via SpeechSynthesizer");
+                        }
+                        catch (Exception ex)
+                        {
+                            Log.Error(ex, "SpeechSynthesizer error during Speak.");
+                        }
+                    });
+                }
+                catch (Exception ex)
+                {
+                    Log.Error(ex, "Task.Run error in SpeakAsync");
+                }
             }
             else if (_pythonBridge.IsPythonRunning)
             {
-                // Python fallback TTS (pyttsx3 or espeak)
+                Log.Information("Using Python fallback TTS");
                 await _pythonBridge.SpeakAsync(text);
             }
             else
             {
-                Log.Warning("No TTS engine available — cannot speak: {Text}", text);
+                Log.Error("CRITICAL: No TTS engine available — cannot speak: {Text}", text);
             }
         }
 

@@ -100,26 +100,33 @@ namespace LucyAI
         //
         private static void RegisterCoreServices(IServiceCollection services)
         {
+            Log.Information("Registering core services...");
+
             // ── Voice pipeline ────────────────────────────────────────────────
             services.AddSingleton<IPythonBridgeService,      PythonBridgeService>();
             services.AddSingleton<IVoiceEngineService,       VoiceEngineService>();
             services.AddSingleton<IVoiceDiagnosticsService,  VoiceDiagnosticsService>();
+            Log.Debug("Voice services registered");
 
             // ── AI brain ──────────────────────────────────────────────────────
             services.AddSingleton<IAIBrainService,           AIBrainService>();
+            Log.Debug("AI brain service registered");
 
             // ── System & infrastructure ───────────────────────────────────────
             services.AddSingleton<ISystemMetricsService,     SystemMetricsService>();
             services.AddSingleton<IWindowsAutomationService, WindowsAutomationService>();
+            Log.Debug("System services registered");
 
             // ── Memory & file indexing ────────────────────────────────────────
             services.AddSingleton<IMemoryService,            MemoryService>();
             services.AddSingleton<IFileIndexerService,       FileIndexerService>();
+            Log.Debug("Memory and file services registered");
 
             // ── Audio feedback ────────────────────────────────────────────────
             services.AddSingleton<ISoundEffectService,       SoundEffectService>();
+            Log.Debug("Sound effect service registered");
 
-            Log.Information("All core services registered.");
+            Log.Information("All core services registered successfully.");
         }
 
         // ── UI Registration ───────────────────────────────────────────────────
@@ -134,11 +141,32 @@ namespace LucyAI
         {
             base.OnStartup(e);
 
+            Log.Information("Starting LUCY host...");
             await _host.StartAsync();
+            Log.Information("Host started successfully");
 
+            Log.Information("Resolving MainWindow from DI container...");
             var mainWindow = _host.Services.GetRequiredService<MainWindow>();
+            
+            Log.Information("Verifying critical services are available...");
+            try
+            {
+                var voiceService = _host.Services.GetRequiredService<IVoiceEngineService>();
+                Log.Information("✓ VoiceEngineService resolved successfully");
+                
+                var soundService = _host.Services.GetRequiredService<ISoundEffectService>();
+                Log.Information("✓ SoundEffectService resolved successfully");
+                
+                var viewModel = _host.Services.GetRequiredService<MainViewModel>();
+                Log.Information("✓ MainViewModel resolved successfully");
+            }
+            catch (Exception ex)
+            {
+                Log.Fatal(ex, "CRITICAL: Failed to resolve required services from DI container!");
+                throw;
+            }
+            
             mainWindow.Show();
-
             Log.Information("MainWindow displayed — LUCY shell is live.");
         }
 

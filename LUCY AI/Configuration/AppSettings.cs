@@ -107,13 +107,23 @@ namespace LucyAI.Configuration
         /// <summary>
         /// Minimum STT confidence (0.0–1.0) to accept a recognised phrase.
         /// Below this threshold the recognition is silently discarded.
-        /// 0.2 is permissive; raise to 0.5 for fewer false positives.
+        /// 0.2 is permissive (accepts weak matches); 0.6 is stricter (fewer false positives).
+        /// Recommended: 0.4-0.6 for noisy environments, 0.3 for quiet rooms.
         /// </summary>
         public float SttConfidenceThreshold { get; set; } = 0.2f;
 
         /// <summary>
+        /// Minimum audio level (0-100) required to process speech recognition.
+        /// Filters out background noise and very quiet sounds.
+        /// 0 = accept all audio, 15 = moderate gating, 30 = strict (loud speech only).
+        /// Recommended: 10-15 for most environments.
+        /// </summary>
+        public int MinAudioLevelThreshold { get; set; } = 10;
+
+        /// <summary>
         /// Milliseconds between accepted speech events (debounce).
         /// Prevents the same utterance firing twice.
+        /// 800ms is default; increase to 1200ms if commands fire multiple times.
         /// </summary>
         public int SttDebounceMs { get; set; } = 800;
     }

@@ -41,7 +41,7 @@ namespace LucyAI.Memory.Services
                 catch { }
 
                 // Default memory seeds if empty
-                if (!_memories.ContainsKey("UserName")) _memories["UserName"] = "Vishrut";
+                if (!_memories.ContainsKey("UserName")) _memories["UserName"] = "Boss";
                 if (!_memories.ContainsKey("AI_Name")) _memories["AI_Name"] = "LUCY";
                 if (!_memories.ContainsKey("Role")) _memories["Role"] = "JARVIS Voice Operating System";
                 if (!_memories.ContainsKey("PreferredLanguage")) _memories["PreferredLanguage"] = "English / Gujarati / Hindi";
