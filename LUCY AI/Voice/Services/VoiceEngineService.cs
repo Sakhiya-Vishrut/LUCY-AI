@@ -33,8 +33,11 @@ namespace LucyAI.Voice.Services
 
         // ── State ─────────────────────────────────────────────────────────────
         private bool _isListening;
+        private bool _isSpeaking;
         private bool _disposed;
         private DateTime _lastSpeechTime = DateTime.MinValue;
+
+        public bool IsMicrophoneAvailable { get; private set; } = true;
 
         // ── Events (consumed by MainViewModel) ────────────────────────────────
         public event EventHandler<string>? VoiceCommandRecognized;
@@ -55,7 +58,7 @@ namespace LucyAI.Voice.Services
             _pythonBridge.VoiceStateChanged  += (_, st)   =>
             {
                 // Only relay Python's state if C# synthesizer is not already speaking
-                if (_synthesizer?.State != SynthesizerState.Speaking)
+                if (_synthesizer?.State != SynthesizerState.Speaking && !_isSpeaking)
                     VoiceStateChanged?.Invoke(this, st);
             };
             _pythonBridge.AudioLevelChanged  += (_, lvl) => AudioLevelChanged?.Invoke(this, lvl);
@@ -149,13 +152,29 @@ namespace LucyAI.Voice.Services
                 try   { _recognizer = new SpeechRecognitionEngine(culture); }
                 catch { _recognizer = new SpeechRecognitionEngine(); }
 
-                _recognizer.SetInputToDefaultAudioDevice();
+                try
+                {
+                    _recognizer.SetInputToDefaultAudioDevice();
+                    _recognizer.InitialSilenceTimeout = TimeSpan.FromSeconds(5);
+                    _recognizer.BabbleTimeout = TimeSpan.FromSeconds(0);
+                    _recognizer.EndSilenceTimeout = TimeSpan.FromSeconds(1.2);
+                    _recognizer.EndSilenceTimeoutAmbiguous = TimeSpan.FromSeconds(1.5);
+
+                    IsMicrophoneAvailable = true;
+                    Log.Information("STT Engine bound successfully to default audio recording device (VAD EndSilenceTimeout: 1.2s).");
+                }
+                catch (Exception micEx)
+                {
+                    IsMicrophoneAvailable = false;
+                    Log.Error(micEx, "MICROPHONE INPUT NOT DETECTED — Default audio device unavailable or disconnected.");
+                    VoiceStateChanged?.Invoke(this, "MICROPHONE INPUT NOT DETECTED");
+                }
 
                 // ═══════════════════════════════════════════════════════════════
                 //  HYBRID SPEECH RECOGNITION ENGINE (CommandChoices + Dictation)
                 // ═══════════════════════════════════════════════════════════════
                 //  1. High-priority CommandChoices grammar matches key phrases
-                //     (Hello, Open Chrome, What time is it, etc.) with ~95% confidence.
+                //     (Hello, Open Google Chrome, What time is it, Open Notepad, etc.) with ~95% confidence.
                 //  2. Fallback DictationGrammar captures free-form custom sentences.
                 // ═══════════════════════════════════════════════════════════════
 
@@ -165,15 +184,15 @@ namespace LucyAI.Voice.Services
                     var choices = new Choices(new string[]
                     {
                         "Hello", "Hi", "Hey", "Hello Lucy", "Hi Lucy", "Hey Lucy", "Lucy hello", "Lucy hi", "Lucy hey",
-                        "Good morning", "Good afternoon", "Good evening", "How are you", "Lucy how are you",
-                        "Lucy kem cho", "Lucy kaise ho", "Who are you", "What is your name",
+                        "Good morning", "Good afternoon", "Good evening", "Good morning Lucy", "Good afternoon Lucy", "Good evening Lucy",
+                        "How are you", "Lucy how are you", "Lucy kem cho", "Lucy kaise ho", "Who are you", "What is your name",
                         "What can you do", "Help", "Lucy help", "Tell me a joke", "Joke",
                         "Lucy", "Lucy wake up", "Lucy resume listening", "Lucy stop listening", "Lucy sleep",
-                        "Open Chrome", "Chrome kholo", "Browser kholo", "Launch Chrome", "Lucy open Chrome",
+                        "Open Google Chrome", "Open Chrome", "Launch Google Chrome", "Launch Chrome", "Chrome kholo", "Google Chrome kholo", "Browser kholo", "Lucy open Chrome",
                         "Open VS Code", "Open Visual Studio", "Code kholo", "Visual Studio kholo", "Lucy open Visual Studio",
                         "Open Spotify", "Spotify kholo", "Play music", "Lucy open Spotify",
                         "Open WhatsApp", "WhatsApp kholo", "Lucy open WhatsApp",
-                        "Open Calculator", "Calculator kholo", "Open Notepad", "Notepad kholo",
+                        "Open Calculator", "Calculator kholo", "Open Notepad", "Launch Notepad", "Notepad kholo", "Lucy open Notepad",
                         "Open YouTube", "YouTube kholo", "Lucy open YouTube",
                         "Play song on YouTube", "YouTube par song chalavo",
                         "System Status", "Status shu che", "PC status kya hai", "Check status",
@@ -181,8 +200,12 @@ namespace LucyAI.Voice.Services
                         "Lock screen", "PC lock karo", "Lock PC", "Lucy lock screen",
                         "Shutdown computer", "Restart computer", "Delete downloads",
                         "Volume up", "Volume down", "Mute audio", "Volume 50 percent", "Task manager", "Empty recycle bin",
-                        "Search Angular tutorial", "Lucy search Angular tutorial", "Search google", "What time is it", "Lucy what time is it",
-                        "What is the date", "What day is it",
+                        "Search Angular tutorial", "Lucy search Angular tutorial", "Search google",
+                        "What time is it", "What is the time", "Tell me the time", "Lucy what time is it",
+                        "What is the date", "What day is it", "Today date",
+                        "Close it", "Close app", "Close application", "Close Chrome", "Close Google Chrome", "Close Visual Studio", "Close Notepad",
+                        "What is dependency injection", "What is Angular", "What is dot net", "What is C sharp",
+                        "What is OOP", "What is microservices", "What is REST API", "What is Docker", "What is Git", "What is SQL",
                         "Open home", "Open voice", "Open memory", "Open files", "Open browser", "Open vision", "Open automation", "Open apps", "Open settings", "Open developer", "Open control",
                         "Yes confirm"
                     });
@@ -211,33 +234,63 @@ namespace LucyAI.Voice.Services
 
                 // Live Audio level → drives particle hologram animation
                 _recognizer.AudioLevelUpdated += (_, e) =>
-                    AudioLevelChanged?.Invoke(this, e.AudioLevel);
+                {
+                    if (!_isSpeaking && _synthesizer?.State != SynthesizerState.Speaking)
+                    {
+                        AudioLevelChanged?.Invoke(this, e.AudioLevel);
+                    }
+                };
 
                 // Diagnostic Audio Events
                 _recognizer.SpeechDetected += (_, e) =>
                 {
-                    Log.Debug("STT Audio detected from microphone (Position: {Position})", e.AudioPosition);
+                    if (!_isSpeaking)
+                    {
+                        Log.Information("STT MICROPHONE AUDIO SIGNAL DETECTED — User started speaking (Position: {Position})", e.AudioPosition);
+                    }
                 };
 
                 _recognizer.SpeechHypothesized += (_, e) =>
                 {
-                    if (e.Result != null && !string.IsNullOrWhiteSpace(e.Result.Text))
+                    if (!_isSpeaking && e.Result != null && !string.IsNullOrWhiteSpace(e.Result.Text))
                     {
-                        Log.Debug("STT Hypothesis: '{Text}'", e.Result.Text);
+                        Log.Information("STT RAW HYPOTHESIS: '{Text}'", e.Result.Text);
                     }
                 };
 
-                // Speech Recognized with detailed diagnostic logging & adaptive threshold
+                // Speech Recognized with detailed diagnostic logging & transcript tracking
                 _recognizer.SpeechRecognized += (_, e) =>
                 {
                     if (e.Result == null || string.IsNullOrWhiteSpace(e.Result.Text)) return;
 
+                    // Crucial: Ignore STT when LUCY is speaking to prevent self-listening feedback loop
+                    if (_isSpeaking || _synthesizer?.State == SynthesizerState.Speaking)
+                    {
+                        Log.Debug("STT SpeechRecognized suppressed while LUCY is speaking: '{Text}'", e.Result.Text);
+                        return;
+                    }
+
                     float confidence = e.Result.Confidence;
                     string text = e.Result.Text;
+                    string grammarName = e.Result.Grammar?.Name ?? "Unknown";
+
+                    // RAW TRANSCRIPT LOGGING: Show exact transcript LUCY heard
+                    Log.Information("STT RAW TRANSCRIPT CAPTURED: '{Text}' [Grammar: {Grammar}, Confidence: {Confidence:F2}]",
+                        text, grammarName, confidence);
+
                     float minThreshold = Math.Min(_voiceSettings.SttConfidenceThreshold, 0.15f);
 
-                    Log.Information("STT SpeechRecognized: '{Text}' (Confidence: {Confidence:F2}, Threshold: {Threshold:F2})",
-                        text, confidence, minThreshold);
+                    // For Dictation (free-form), require higher confidence and ignore short noise fragments
+                    if (grammarName == "Dictation")
+                    {
+                        minThreshold = Math.Max(minThreshold, 0.35f);
+                        string[] words = text.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                        if (words.Length == 1 && words[0].Length < 4 && confidence < 0.50f)
+                        {
+                            Log.Debug("STT Dictation noise fragment ignored: '{Text}' (Confidence: {Confidence:F2})", text, confidence);
+                            return;
+                        }
+                    }
 
                     if (confidence >= minThreshold)
                     {
@@ -245,16 +298,17 @@ namespace LucyAI.Voice.Services
                     }
                     else
                     {
-                        Log.Warning("STT SpeechRecognized ignored due to low confidence: {Confidence:F2} < {Threshold:F2} (Text: '{Text}')",
+                        Log.Warning("STT Transcript ignored due to low confidence: {Confidence:F2} < {Threshold:F2} (Text: '{Text}')",
                             confidence, minThreshold, text);
                     }
                 };
 
                 _recognizer.SpeechRecognitionRejected += (_, e) =>
                 {
+                    if (_isSpeaking) return;
                     string text = e.Result != null ? e.Result.Text : "unrecognized audio";
                     float confidence = e.Result != null ? e.Result.Confidence : 0.0f;
-                    Log.Warning("STT SpeechRejected by recognizer: '{Text}' (Confidence: {Confidence:F2})", text, confidence);
+                    Log.Debug("STT Audio noise rejected by recognizer: '{Text}' (Confidence: {Confidence:F2})", text, confidence);
                 };
 
                 _recognizer.AudioSignalProblemOccurred += (_, e) =>
@@ -277,7 +331,8 @@ namespace LucyAI.Voice.Services
             }
             catch (Exception ex)
             {
-                Log.Error(ex, "Failed to initialise SpeechRecognitionEngine — STT disabled.");
+                Log.Error(ex, "STT FAILED: Unable to initialize Speech Recognition Engine.");
+                VoiceStateChanged?.Invoke(this, "STT FAILED");
                 _recognizer = null;
             }
         }
@@ -286,11 +341,18 @@ namespace LucyAI.Voice.Services
 
         /// <summary>
         /// Called whenever text is recognised (from either C# or Python engine).
-        /// Applies debounce, cancels active TTS, then fires VoiceCommandRecognized.
+        /// Applies debounce and fires VoiceCommandRecognized.
         /// </summary>
         private void OnRecognizedText(string text)
         {
             if (string.IsNullOrWhiteSpace(text) || text.Trim().Length < 2) return;
+
+            // Ignore recognition if LUCY is currently speaking
+            if (_isSpeaking || _synthesizer?.State == SynthesizerState.Speaking)
+            {
+                Log.Debug("STT OnRecognizedText ignored while speaking: '{Text}'", text);
+                return;
+            }
 
             string cleaned = text.Trim().TrimEnd('.', '!', '?');
 
@@ -304,13 +366,6 @@ namespace LucyAI.Voice.Services
             _lastSpeechTime = DateTime.Now;
 
             Log.Information("STT Command Accepted: '{Text}' — forwarding to MainViewModel", cleaned);
-
-            // If LUCY is speaking, stop her so she doesn't talk over the user
-            if (_synthesizer?.State == SynthesizerState.Speaking)
-            {
-                try { _synthesizer.SpeakAsyncCancelAll(); }
-                catch { /* already stopped */ }
-            }
 
             VoiceStateChanged?.Invoke(this, "Thinking");
             VoiceCommandRecognized?.Invoke(this, cleaned);
@@ -366,9 +421,10 @@ namespace LucyAI.Voice.Services
 
             Log.Information("TTS speaking: '{Text}' (length: {Length} chars)", text.Substring(0, Math.Min(text.Length, 50)), text.Length);
 
-            if (_synthesizer != null)
+            _isSpeaking = true;
+            try
             {
-                try
+                if (_synthesizer != null)
                 {
                     await Task.Run(() =>
                     {
@@ -383,19 +439,21 @@ namespace LucyAI.Voice.Services
                         }
                     });
                 }
-                catch (Exception ex)
+                else if (_pythonBridge.IsPythonRunning)
                 {
-                    Log.Error(ex, "Task.Run error in SpeakAsync");
+                    Log.Information("Using Python fallback TTS");
+                    await _pythonBridge.SpeakAsync(text);
+                }
+                else
+                {
+                    Log.Error("CRITICAL: No TTS engine available — cannot speak: {Text}", text);
                 }
             }
-            else if (_pythonBridge.IsPythonRunning)
+            finally
             {
-                Log.Information("Using Python fallback TTS");
-                await _pythonBridge.SpeakAsync(text);
-            }
-            else
-            {
-                Log.Error("CRITICAL: No TTS engine available — cannot speak: {Text}", text);
+                // Small buffer delay to allow speaker audio in the room to dissipate before STT resumes
+                await Task.Delay(400);
+                _isSpeaking = false;
             }
         }
 

@@ -9,6 +9,7 @@ namespace LucyAI.Voice.Services
         event EventHandler<string>? VoiceStateChanged;
         event EventHandler<double>? AudioLevelChanged;
 
+        bool IsMicrophoneAvailable { get; }
         void StartListening();
         void StopListening();
         Task SpeakAsync(string text);

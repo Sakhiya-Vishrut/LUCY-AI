@@ -274,10 +274,15 @@ namespace LucyAI.UI.ViewModels
 
             string responseText = string.Empty;
 
+            if (cleanCommand == "[UNRECOGNIZED]")
+            {
+                responseText = "Sorry Boss, I didn't understand that.";
+            }
+
             // ═══════════════════════════════════════════════════════════════
             //  STAGE 1: WAKE WORD & GREETINGS (Instant local response, never Ollama)
             // ═══════════════════════════════════════════════════════════════
-            if (lower is "hello" or "hello lucy" or "lucy hello")
+            else if (lower is "hello" or "hello lucy" or "lucy hello")
             {
                 responseText = "Hello Boss. How can I help you?";
             }
@@ -360,17 +365,17 @@ namespace LucyAI.UI.ViewModels
             // ═══════════════════════════════════════════════════════════════
             //  STAGE 3: APP, FILE, & BROWSER LAUNCH COMMANDS
             // ═══════════════════════════════════════════════════════════════
-            else if (lower.Contains("open chrome") || lower.Contains("chrome kholo") || lower.Contains("chrome open karo") || lower.Contains("browser kholo") || lower.Contains("launch chrome"))
+            else if (lower.Contains("open chrome") || lower.Contains("open google chrome") || lower.Contains("chrome kholo") || lower.Contains("google chrome kholo") || lower.Contains("chrome open karo") || lower.Contains("browser kholo") || lower.Contains("launch chrome") || lower.Contains("launch google chrome"))
             {
                 bool success = _automationService.LaunchApp("chrome");
                 if (success)
                 {
                     _lastOpenedApp = "chrome";
-                    responseText = "Opening Chrome, Boss.";
+                    responseText = "Opening Google Chrome, Boss.";
                 }
                 else
                 {
-                    responseText = "Failed to open Chrome, Boss.";
+                    responseText = "Failed to open Google Chrome, Boss.";
                 }
             }
             else if (lower.Contains("open vs code") || lower.Contains("open visual studio") || lower.Contains("code kholo") || lower.Contains("visual studio kholo") || lower.Contains("code open karo"))
@@ -425,7 +430,7 @@ namespace LucyAI.UI.ViewModels
                     responseText = "Failed to open Calculator, Boss.";
                 }
             }
-            else if (lower.Contains("open notepad") || lower.Contains("notepad kholo") || lower.Contains("notepad open karo"))
+            else if (lower.Contains("open notepad") || lower.Contains("notepad kholo") || lower.Contains("notepad open karo") || lower.Contains("launch notepad"))
             {
                 try
                 {
@@ -612,7 +617,7 @@ namespace LucyAI.UI.ViewModels
 
             if (string.IsNullOrWhiteSpace(responseText))
             {
-                responseText = "Sorry Boss, I didn't understand. Please repeat.";
+                responseText = "Sorry Boss, I didn't understand that.";
             }
 
             Serilog.Log.Information("Generated response: '{Response}' (length: {Length} chars)", 

@@ -9,19 +9,23 @@ namespace LucyAI.Services
     public class VoiceDiagnosticsService : IVoiceDiagnosticsService
     {
         private readonly IPythonBridgeService _pythonBridge;
+        private readonly IVoiceEngineService _voiceEngine;
         private readonly HttpClient _httpClient;
 
-        public VoiceDiagnosticsService(IPythonBridgeService pythonBridge)
+        public VoiceDiagnosticsService(
+            IPythonBridgeService pythonBridge,
+            IVoiceEngineService voiceEngine)
         {
             _pythonBridge = pythonBridge;
-            _httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(3) };
+            _voiceEngine  = voiceEngine;
+            _httpClient   = new HttpClient { Timeout = TimeSpan.FromSeconds(3) };
         }
 
         public async Task<DiagnosticsReport> RunDiagnosticsAsync()
         {
             var report = new DiagnosticsReport
             {
-                IsMicDetected = true,
+                IsMicDetected = _voiceEngine.IsMicrophoneAvailable,
                 IsAudioLevelChanging = true,
                 IsPythonBridgeActive = _pythonBridge.IsPythonRunning,
                 IsTtsReady = true,
@@ -48,7 +52,11 @@ namespace LucyAI.Services
                 report.IsTtsReady = false;
             }
 
-            if (report.IsOllamaConnected && report.IsTtsReady)
+            if (!report.IsMicDetected)
+            {
+                report.OverallStatus = "MICROPHONE DISCONNECTED | PLEASE CONNECT A MIC";
+            }
+            else if (report.IsOllamaConnected && report.IsTtsReady)
             {
                 report.OverallStatus = "SYSTEM OPTIMAL | VOICE PIPELINE ACTIVE";
             }
